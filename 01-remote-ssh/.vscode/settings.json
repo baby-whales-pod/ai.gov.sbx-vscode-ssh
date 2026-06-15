@@ -1,0 +1,82 @@
+{
+  "workbench.iconTheme": "material-icon-theme",
+  "workbench.colorTheme": "Alt Catppuccin Macchiato",
+  "editor.fontSize": 15,
+  "terminal.integrated.fontSize": 15,
+  "editor.insertSpaces": true,
+  "editor.tabSize": 4,
+  "editor.detectIndentation": true,
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000,
+  // "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "workbench.tree.indent": 20,
+  //"workbench.activityBar.location": "top",
+  "workbench.editor.showTabs": "multiple",
+  "window.zoomLevel": 0.0,
+  "[markdown]": {
+    "editor.unicodeHighlight.ambiguousCharacters": false,
+    "editor.unicodeHighlight.invisibleCharacters": false,
+    "diffEditor.ignoreTrimWhitespace": false,
+    "editor.fontWeight": "normal",
+    "editor.fontFamily": "'Droid Sans Mono', 'monospace', monospace",
+    "editor.fontSize": 14,
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "comments": "off",
+      "strings": "off",
+      "other": "off"
+    }
+  },
+  "markdown.preview.fontSize": 15,
+  "workbench.editorAssociations": {
+    //"*.md": "vscode.markdown.preview.editor"
+  },
+  "markdown.marp.html": "all",
+  "[dockerfile]": {
+    "editor.fontSize": 15
+  },
+  "[dockercompose]": {
+    "editor.fontSize": 15
+  },
+  "[json]": {
+    "editor.fontSize": 15
+  },
+  "[yaml]": {
+    "editor.fontSize": 15
+  },
+  "[go]": {
+    "editor.fontSize": 15,
+    "editor.defaultFormatter": "golang.go",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "go.lintTool": "golangci-lint",
+  "go.lintOnSave": "package",
+  "go.formatTool": "goimports",
+  "go.useLanguageServer": true,
+  "gopls": {
+    "ui.semanticTokens": true,
+    "ui.completion.usePlaceholders": true
+  },
+  "todohighlight.keywords": [
+    {
+      "text": "-dev",
+      "color": "#ffffff",
+      "backgroundColor": "#4503E0",
+      "border": "1px solid #4503E0",
+      "borderRadius": "3px",
+      "isWholeLine": false
+    },
+    {
+      "text": "dhi.io",
+      "color": "#ffffff",
+      "backgroundColor": "#0062FF",
+      "border": "1px solid #0062FF",
+      "borderRadius": "3px",
+      "isWholeLine": false
+    }
+  ],
+  "peacock.color": "#b5b0e0"
+}

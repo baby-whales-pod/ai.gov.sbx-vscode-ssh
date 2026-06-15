@@ -1,0 +1,27 @@
+#!/bin/bash
+# Silent launcher for devx-remote-ssh-2.
+#
+# Two non-obvious things going on here:
+#
+# 1. We delegate to `osascript`'s `do shell script` rather than running
+#    start.sh directly. A bare .app launched by LaunchServices (Finder
+#    double-click) runs as a direct child of launchd. From that context,
+#    `sbx` cannot reach the macOS Keychain entry holding the Claude OAuth
+#    credential, so it falls back to "no host creds" and the sandbox boots
+#    with Claude Code unauthenticated. `do shell script` re-enters via the
+#    user's GUI session context (same as Terminal), restoring Keychain
+#    access.
+#
+# 2. `do shell script` spawns sh with a hard-coded PATH of
+#    /usr/bin:/bin:/usr/sbin:/sbin and does NOT inherit the launcher's
+#    PATH. So we prepend the install locations for sbx (Homebrew + the
+#    `task install` default ~/.docker/sbx/bin) inline inside the shell
+#    command itself.
+
+APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+KIT_DIR="$(dirname "$APP_DIR")"
+START_LOG="${TMPDIR:-/tmp}/devx-remote-ssh-2.log"
+PATH_PREFIX="/opt/homebrew/bin:/usr/local/bin:${HOME}/.docker/sbx/bin"
+
+exec /usr/bin/osascript \
+  -e "do shell script \"export PATH=${PATH_PREFIX}:\$PATH; cd '${KIT_DIR}' && ./start.sh > '${START_LOG}' 2>&1\""

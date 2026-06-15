@@ -1,0 +1,154 @@
+schemaVersion: "1"
+kind: mixin
+name: remote-ssh
+displayName: VSCode Remote-SSH
+description: "Run an OpenSSH server inside the sandbox so VSCode (or any SSH client) can connect from the host via Remote-SSH."
+
+network:
+  allowedDomains:
+    - "archive.ubuntu.com:80"
+    - "security.ubuntu.com:80"
+    - "ports.ubuntu.com:80"
+    - "update.code.visualstudio.com:443"
+    - "vscode.download.prss.microsoft.com:443"
+    - "*.vo.msecnd.net:443"
+    - "marketplace.visualstudio.com:443"
+    - "*.gallery.vsassets.io:443"
+    - "*.gallerycdn.vsassets.io:443"
+
+commands:
+  install:
+    - command: "apt-get -o DPkg::Lock::Timeout=600 update && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -yy --no-install-recommends openssh-server && apt-get clean && rm -rf /var/lib/apt/lists/* && mkdir -p /run/sshd && chmod 0755 /run/sshd"
+      user: "root"
+      description: "Install OpenSSH server"
+
+    - command: "install -d -m 0700 -o agent -g agent /home/agent/.ssh && touch /home/agent/.ssh/authorized_keys && chown agent:agent /home/agent/.ssh/authorized_keys && chmod 0600 /home/agent/.ssh/authorized_keys"
+      user: "root"
+      description: "Prepare ~/.ssh with correct ownership and modes"
+
+    - command: |
+        touch /etc/sandbox-persistent.sh
+        grep -qF '/home/agent/.local/bin' /etc/sandbox-persistent.sh || \
+          printf '\n# remote-ssh kit: expose user-local bins (claude, npm-global) to SSH sessions\nexport PATH="/home/agent/.local/bin:/usr/local/share/npm-global/bin:$PATH"\n' >> /etc/sandbox-persistent.sh
+      user: "root"
+      description: "Expose /home/agent/.local/bin and npm-global on PATH for SSH login shells"
+
+    - command: |
+        cat > /etc/ssh/sshd_config.d/10-sandbox.conf <<'EOF'
+        Port 22
+        ListenAddress 0.0.0.0
+        Protocol 2
+        PermitRootLogin no
+        PasswordAuthentication no
+        ChallengeResponseAuthentication no
+        KbdInteractiveAuthentication no
+        UsePAM yes
+        PubkeyAuthentication yes
+        AuthorizedKeysFile %h/.ssh/authorized_keys
+        X11Forwarding no
+        AllowAgentForwarding yes
+        AllowTcpForwarding yes
+        AcceptEnv LANG LC_*
+        ClientAliveInterval 60
+        ClientAliveCountMax 3
+        AllowUsers agent
+        EOF
+        chmod 0644 /etc/ssh/sshd_config.d/10-sandbox.conf
+        ssh-keygen -A
+      user: "root"
+      description: "Write sshd drop-in config (key-only auth, agent only) and generate host keys"
+
+  startup:
+    - command: ["sh", "-c", "mkdir -p /run/sshd && chmod 0755 /run/sshd"]
+      user: "root"
+      background: false
+      description: "Ensure /run/sshd exists"
+
+    # Les vars proxy sandboxd sont dans l'env runtime du container mais sshd
+    # ne les propage pas aux sessions utilisateur (PAM lit /etc/environment).
+    # Sans elles, claude tape direct sur api.anthropic.com, le proxy n'injecte
+    # pas la clé API, on récolte "Invalid API key".
+    # Le bloc est délimité pour pouvoir être réécrit à chaque démarrage (les
+    # ports/certs changent à la création du container).
+    - command:
+        - "sh"
+        - "-c"
+        - |
+          touch /etc/sandbox-persistent.sh
+          sed -i '/# >>> sbx-proxy >>>/,/# <<< sbx-proxy <<</d' /etc/sandbox-persistent.sh
+          {
+            echo '# >>> sbx-proxy >>>'
+            [ -n "$HTTP_PROXY" ]          && echo "export HTTP_PROXY=\"$HTTP_PROXY\""
+            [ -n "$HTTPS_PROXY" ]         && echo "export HTTPS_PROXY=\"$HTTPS_PROXY\""
+            [ -n "$NO_PROXY" ]            && echo "export NO_PROXY=\"$NO_PROXY\""
+            [ -n "$http_proxy" ]          && echo "export http_proxy=\"$http_proxy\""
+            [ -n "$https_proxy" ]         && echo "export https_proxy=\"$https_proxy\""
+            [ -n "$no_proxy" ]            && echo "export no_proxy=\"$no_proxy\""
+            [ -n "$PROXY_CA_CERT_B64" ]   && echo "export PROXY_CA_CERT_B64=\"$PROXY_CA_CERT_B64\""
+            [ -n "$NODE_EXTRA_CA_CERTS" ] && echo "export NODE_EXTRA_CA_CERTS=\"$NODE_EXTRA_CA_CERTS\""
+            echo '# <<< sbx-proxy <<<'
+          } >> /etc/sandbox-persistent.sh
+      user: "root"
+      background: false
+      description: "Sync sandboxd proxy env vars to /etc/sandbox-persistent.sh so SSH sessions can reach the proxy (and claude gets its credentials)"
+
+    - command: ["/usr/sbin/sshd", "-D", "-e"]
+      user: "root"
+      background: true
+      description: "Start sshd in the foreground (logs to stderr)"
+
+    - command: ["sh", "-c", "for i in $(seq 1 40); do grep -q ':0016 ' /proc/net/tcp 2>/dev/null && exit 0; sleep 0.25; done; echo 'sshd failed to bind port 22' >&2; exit 1"]
+      user: "root"
+      background: false
+      description: "Wait up to 10s for sshd to bind 0.0.0.0:22"
+
+memory: |
+  ## VSCode Remote-SSH access
+
+  An OpenSSH server is running on port 22 inside this sandbox. Authentication is
+  **key-only**; passwords are disabled. Only the `agent` user may log in.
+
+  ### From the host
+
+  1. Create the sandbox with this kit:
+
+     ```bash
+     sbx run claude --kit ./remote-ssh/ --name vscode-ssh .
+     ```
+
+  2. Inject your public key into the sandbox (sshd reads
+     `~/.ssh/authorized_keys` on every connection, no restart needed).
+     `sbx exec` flags must precede the sandbox name:
+
+     ```bash
+     sbx exec --env KEY="$(cat ~/.ssh/id_ed25519.pub)" vscode-ssh -- \
+       sh -c 'printf "%s\n" "$KEY" > /home/agent/.ssh/authorized_keys && chmod 600 /home/agent/.ssh/authorized_keys'
+     ```
+
+  3. Publish the SSH port:
+
+     ```bash
+     sbx ports vscode-ssh --publish 2222:22/tcp
+     ```
+
+  4. Add an entry to `~/.ssh/config` (host keys are regenerated on each create,
+     so disabling strict checking is appropriate for a disposable sandbox):
+
+     ```
+     Host sbx-vscode-ssh
+       HostName 127.0.0.1
+       Port 2222
+       User agent
+       StrictHostKeyChecking no
+       UserKnownHostsFile /dev/null
+     ```
+
+  5. In VSCode: `Remote-SSH: Connect to Host…` → `sbx-vscode-ssh`. The first
+     connection will download VSCode-server into `~/.vscode-server/` inside
+     the sandbox.
+
+  ### Diagnostics inside the sandbox
+
+  - `pgrep -a sshd` — is sshd running?
+  - `ss -ltnp '( sport = :22 )'` — is it listening on 0.0.0.0:22?
+  - `cat /home/agent/.ssh/authorized_keys` — was the key injected?
