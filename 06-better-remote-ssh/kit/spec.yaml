@@ -1,0 +1,72 @@
+schemaVersion: "1"
+kind: mixin
+name: remote-ssh
+displayName: VSCode Remote-SSH (runtime)
+description: "Per-boot mixin: start sshd and sync proxy env. Layered on top of the built-in claude agent so its Anthropic credential wiring is preserved. The OpenSSH server itself is pre-baked in the template image (selected via -t)."
+
+# Only the domains needed at CONNECT time: VSCode downloads its server and
+# extensions on the first Remote-SSH connection. OpenSSH itself is pre-baked in
+# the template image, so no apt domains are needed here.
+network:
+  allowedDomains:
+    - "update.code.visualstudio.com:443"
+    - "vscode.download.prss.microsoft.com:443"
+    - "*.vo.msecnd.net:443"
+    - "marketplace.visualstudio.com:443"
+    - "*.gallery.vsassets.io:443"
+    - "*.gallerycdn.vsassets.io:443"
+
+commands:
+  startup:
+    - command: ["sh", "-c", "mkdir -p /run/sshd && chmod 0755 /run/sshd"]
+      user: "root"
+      background: false
+      description: "Ensure /run/sshd exists"
+
+    # sshd does not propagate the container's runtime env to user sessions, so
+    # tools launched from VSCode (claude, npm, pip) wouldn't see the sandbox
+    # proxy and would fail with 'Invalid API key'. Mirror the proxy vars into
+    # the file every Bash session sources. Delimited block = idempotent rewrite.
+    - command:
+        - "sh"
+        - "-c"
+        - |
+          touch /etc/sandbox-persistent.sh
+          sed -i '/# >>> sbx-proxy >>>/,/# <<< sbx-proxy <<</d' /etc/sandbox-persistent.sh
+          {
+            echo '# >>> sbx-proxy >>>'
+            [ -n "$HTTP_PROXY" ]          && echo "export HTTP_PROXY=\"$HTTP_PROXY\""
+            [ -n "$HTTPS_PROXY" ]         && echo "export HTTPS_PROXY=\"$HTTPS_PROXY\""
+            [ -n "$NO_PROXY" ]            && echo "export NO_PROXY=\"$NO_PROXY\""
+            [ -n "$http_proxy" ]          && echo "export http_proxy=\"$http_proxy\""
+            [ -n "$https_proxy" ]         && echo "export https_proxy=\"$https_proxy\""
+            [ -n "$no_proxy" ]            && echo "export no_proxy=\"$no_proxy\""
+            [ -n "$PROXY_CA_CERT_B64" ]   && echo "export PROXY_CA_CERT_B64=\"$PROXY_CA_CERT_B64\""
+            [ -n "$NODE_EXTRA_CA_CERTS" ] && echo "export NODE_EXTRA_CA_CERTS=\"$NODE_EXTRA_CA_CERTS\""
+            echo '# <<< sbx-proxy <<<'
+          } >> /etc/sandbox-persistent.sh
+      user: "root"
+      background: false
+      description: "Mirror sandboxd proxy env vars into /etc/sandbox-persistent.sh for SSH sessions"
+
+    - command: ["/usr/sbin/sshd", "-D", "-e"]
+      user: "root"
+      background: true
+      description: "Start sshd in the foreground"
+
+    - command: ["sh", "-c", "for i in $(seq 1 40); do grep -q ':0016 ' /proc/net/tcp 2>/dev/null && exit 0; sleep 0.25; done; echo 'sshd failed to bind port 22' >&2; exit 1"]
+      user: "root"
+      background: false
+      description: "Wait up to 10s for sshd to bind 0.0.0.0:22"
+
+memory: |
+  ## VSCode Remote-SSH access
+
+  OpenSSH (pre-baked in the template image) runs on port 22 inside this sandbox.
+  Key-only auth; only the `agent` user may log in. The host connects via VSCode
+  Remote-SSH over a published port.
+
+  Diagnostics inside the sandbox:
+  - `pgrep -a sshd` — is sshd running?
+  - `ss -ltnp '( sport = :22 )'` — listening on 0.0.0.0:22?
+  - `cat /home/agent/.ssh/authorized_keys` — was the key injected?
